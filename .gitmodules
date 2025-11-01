@@ -1,0 +1,3 @@
+[submodule "chitchat-web"]
+	path = chitchat-web
+	url = git@github.com:dimensionbuster/chitchat-web.git
