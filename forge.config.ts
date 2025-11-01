@@ -33,6 +33,7 @@ const config: ForgeConfig = {
     new MakerSquirrel({
       iconUrl: path.resolve(__dirname, 'assets', 'originaltwi.ico'),
       setupIcon: path.resolve(__dirname, 'assets', 'originaltwi.ico'),
+      setupExe: 'ChitChatSetup.exe',
     }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),

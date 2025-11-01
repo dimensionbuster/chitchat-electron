@@ -15,13 +15,15 @@ declare global {
 
 export type ContextBridgeApi = {
     newChatMessage: (payload: { authorName: string; text: string }) => void,
-    createNotification: (authorName: string, text: string) => void,
+    createNotification: (authorName: string, text: string, messageId: string, roomId: string) => void,
     closeNotification: (id: string) => void,
-    clickNotification: (id: string) => void,
+    clickNotification: (roomId: string, userName?: string) => void,
     sendLogMessage: (level: 'info' | 'warn' | 'error', message: string) => void,
     windowMinimize: () => void,
     windowMaximize: () => void,
     windowClose: () => void,
+    openChatRoom: (roomId: string, userName?: string) => void,
+    showMainWindow: () => void,
 }
 
 const exposedApi: ContextBridgeApi = {
@@ -30,10 +32,12 @@ const exposedApi: ContextBridgeApi = {
         payload.authorName,
         payload.text
     ),
-    createNotification: (authorName: string, text: string) => ipcRenderer.send(
+    createNotification: (authorName: string, text: string, messageId: string, roomId: string) => ipcRenderer.send(
         'create-notification',
         authorName,
-        text
+        text,
+        messageId,
+        roomId
     ),
     closeNotification: (id:string) => ipcRenderer.send(
         'close-notification',
@@ -55,9 +59,17 @@ const exposedApi: ContextBridgeApi = {
         console.log('windowClose called');
         ipcRenderer.send('window-close');
     },
-    clickNotification: (id: string) => {
-        console.log('clickNotification called with id:', id);
-        ipcRenderer.send('click-notification', id);
+    clickNotification: (roomId: string, userName?: string) => {
+        console.log('clickNotification called with roomId:', roomId, 'userName:', userName);
+        ipcRenderer.send('click-notification', roomId, userName);
+    },
+    openChatRoom: (roomId: string, userName?: string) => {
+        console.log('openChatRoom called with roomId:', roomId, 'userName:', userName);
+        ipcRenderer.send('open-chat-room', roomId, userName);
+    },
+    showMainWindow: () => {
+        console.log('showMainWindow called');
+        ipcRenderer.send('show-main-window');
     }
 }
 
