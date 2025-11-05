@@ -24,6 +24,11 @@ export type ContextBridgeApi = {
     windowClose: () => void,
     openChatRoom: (roomId: string, userName?: string) => void,
     showMainWindow: () => void,
+    // 커스텀 다이얼로그 API
+    showDialog: (message: string) => Promise<void>,
+    showConfirm: (message: string) => Promise<boolean>,
+    closeDialog: (dialogId: string, result: boolean) => void,
+    resizeAndShowDialog: (dialogId: string, width: number, height: number) => void,
 }
 
 const exposedApi: ContextBridgeApi = {
@@ -70,6 +75,23 @@ const exposedApi: ContextBridgeApi = {
     showMainWindow: () => {
         console.log('showMainWindow called');
         ipcRenderer.send('show-main-window');
+    },
+    // 커스텀 다이얼로그 API
+    showDialog: (message: string): Promise<void> => {
+        console.log('showDialog called:', message);
+        return ipcRenderer.invoke('show-dialog', message);
+    },
+    showConfirm: (message: string): Promise<boolean> => {
+        console.log('showConfirm called:', message);
+        return ipcRenderer.invoke('show-confirm', message);
+    },
+    closeDialog: (dialogId: string, result: boolean) => {
+        console.log('closeDialog called:', dialogId, result);
+        ipcRenderer.send('close-dialog', dialogId, result);
+    },
+    resizeAndShowDialog: (dialogId: string, width: number, height: number) => {
+        console.log('resizeAndShowDialog called:', dialogId, width, height);
+        ipcRenderer.send('resize-and-show-dialog', dialogId, width, height);
     }
 }
 
@@ -105,11 +127,12 @@ window.addEventListener('DOMContentLoaded', () => {
     
     // Inject titlebar directly - don't rely on external function
     setTimeout(() => {
-        // 알림창인지 확인 (URL 해시에 /notification이 포함되어 있으면 알림창)
+        // 알림창이나 다이얼로그 창인지 확인
         const isNotificationWindow = window.location.hash.includes('/notification');
+        const isDialogWindow = window.location.hash.includes('/dialog');
         
-        if (isNotificationWindow) {
-            console.log('Notification window detected - skipping titlebar injection');
+        if (isNotificationWindow || isDialogWindow) {
+            console.log('Notification or Dialog window detected - skipping titlebar injection');
             return;
         }
         

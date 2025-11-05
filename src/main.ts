@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import started from 'electron-squirrel-startup'
 
 // ============================================================================
@@ -23,6 +24,8 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 const notificationWindows = new Set<BrowserWindow>()
 const chatRoomWindows = new Map<string, BrowserWindow>()
+const dialogWindows = new Map<string, { window: BrowserWindow; resolve: (result: boolean) => void }>()
+let powerSaveBlockerId: number | null = null
 
 // ============================================================================
 // 초기 설정
@@ -85,8 +88,8 @@ function createWindow(): void {
   const iconPath = path.join(__dirname, '../../assets/originaltwi.ico')
   
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 410,
+    height: 700,
     frame: false,
     icon: iconPath,
     webPreferences: {
@@ -96,6 +99,7 @@ function createWindow(): void {
       // 영구 세션 파티션 사용 - IndexedDB 데이터 영구 보존
       partition: 'persist:chitchat',
       webSecurity: true,
+      backgroundThrottling: false, // 백그라운드에서도 실시간 통신 유지
     },
   })
 
@@ -333,6 +337,7 @@ function createNotification(authorName: string, text: string, messageId:string, 
       contextIsolation: true,
       partition: 'persist:chitchat', // 같은 파티션 사용
       webSecurity: true,
+      backgroundThrottling: false, // 백그라운드에서도 실시간 통신 유지
     },
   })
 
@@ -388,6 +393,70 @@ function closeLastNotification(): void {
       // Ignore errors
     }
   }
+}
+
+// ============================================================================
+// 다이얼로그 윈도우 관리
+// ============================================================================
+
+/**
+ * 다이얼로그 윈도우 생성 (숨김 상태로 생성, Vue가 크기 측정 후 resizeAndShowDialog 호출)
+ */
+function createDialogWindow(
+  message: string,
+  type: 'alert' | 'confirm',
+  dialogId: string,
+  resolve: (result: boolean) => void,
+  parentWindow: BrowserWindow
+): void {
+  const preloadPath = path.join(__dirname, 'preload.js')
+  
+  // 초기 크기는 작게 설정 (Vue에서 실제 크기 측정 후 조정됨)
+  const dialogWindow = new BrowserWindow({
+    width: 100,
+    height: 100,
+    parent: parentWindow, // 부모 창 설정
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    modal: true, // 모달 설정
+    show: false, // 숨김 상태로 생성
+    webPreferences: {
+      preload: preloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: 'persist:chitchat',
+      webSecurity: true,
+      backgroundThrottling: false, // 백그라운드에서도 실시간 통신 유지
+    },
+  })
+
+  // 다이얼로그 페이지 로드
+  const dialogUrl = `/dialog?message=${encodeURIComponent(message)}&type=${type}&dialogId=${encodeURIComponent(dialogId)}`
+  
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    dialogWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${dialogUrl}`)
+  } else {
+    dialogWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+      { hash: dialogUrl }
+    )
+  }
+
+  // 창이 닫힐 때 자동으로 취소 처리
+  dialogWindow.on('closed', () => {
+    const dialogInfo = dialogWindows.get(dialogId)
+    if (dialogInfo) {
+      dialogInfo.resolve(false) // 창이 닫히면 취소로 간주
+      dialogWindows.delete(dialogId)
+    }
+  })
+
+  // 다이얼로그 맵에 추가
+  dialogWindows.set(dialogId, { window: dialogWindow, resolve })
 }
 
 // ============================================================================
@@ -455,6 +524,7 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
       nodeIntegration: false,
       partition: 'persist:chitchat',
       webSecurity: true,
+      backgroundThrottling: false, // 백그라운드에서도 실시간 통신 유지
     },
   })
 
@@ -523,7 +593,20 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
 // 앱 생명주기 이벤트
 // ============================================================================
 
+// ============================================================================
+// 백그라운드 성능 최적화 설정
+// ============================================================================
+
+// 앱 전체의 백그라운드 throttling 비활성화
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-features', 'WebContentsDiscard')
+
 app.on('ready', async () => {
+  // Power Save Blocker 활성화 - 시스템 절전 모드 방지
+  powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  console.log('Power Save Blocker activated:', powerSaveBlocker.isStarted(powerSaveBlockerId))
+  
   // IndexedDB 및 LocalStorage를 위한 세션 설정
   // partition 설정으로 영구 저장소 활성화
   console.log('userData path:', app.getPath('userData'))
@@ -570,6 +653,12 @@ app.on('ready', async () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  
+  // Power Save Blocker 해제
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId)
+    console.log('Power Save Blocker deactivated')
+  }
 })
 
 app.on('window-all-closed', () => {
@@ -631,4 +720,69 @@ ipcMain.on('open-chat-room', (_event, roomId: string, userName?: string) => {
 // 메인 윈도우 표시
 ipcMain.on('show-main-window', () => {
   showMainWindow()
+})
+
+// 커스텀 다이얼로그 핸들러
+ipcMain.handle('show-dialog', async (event, message: string): Promise<void> => {
+  const dialogId = crypto.randomUUID()
+  const parentWindow = BrowserWindow.fromWebContents(event.sender)
+  if (!parentWindow) return
+  
+  return new Promise<void>((resolve) => {
+    createDialogWindow(message, 'alert', dialogId, () => resolve(), parentWindow)
+  })
+})
+
+ipcMain.handle('show-confirm', async (event, message: string): Promise<boolean> => {
+  const dialogId = crypto.randomUUID()
+  const parentWindow = BrowserWindow.fromWebContents(event.sender)
+  if (!parentWindow) return false
+  
+  return new Promise<boolean>((resolve) => {
+    createDialogWindow(message, 'confirm', dialogId, resolve, parentWindow)
+  })
+})
+
+ipcMain.on('close-dialog', (_event, dialogId: string, result: boolean) => {
+  const dialogInfo = dialogWindows.get(dialogId)
+  if (dialogInfo) {
+    const { window, resolve } = dialogInfo
+    resolve(result)
+    dialogWindows.delete(dialogId)
+    if (!window.isDestroyed()) {
+      window.close()
+    }
+  }
+})
+
+ipcMain.on('resize-and-show-dialog', (_event, dialogId: string, width: number, height: number) => {
+  const dialogInfo = dialogWindows.get(dialogId)
+  if (dialogInfo && !dialogInfo.window.isDestroyed()) {
+    const { window: dialogWindow } = dialogInfo
+    const parentWindow = dialogWindow.getParentWindow()
+
+    if (parentWindow && !parentWindow.isDestroyed()) {
+      // 부모 창의 중앙에 위치 계산
+      const parentBounds = parentWindow.getBounds()
+      const dialogX = parentBounds.x + Math.floor((parentBounds.width - width) / 2)
+      const dialogY = parentBounds.y + Math.floor((parentBounds.height - height) / 2)
+
+      // 크기와 위치 설정
+      dialogWindow.setBounds({ x: dialogX, y: dialogY, width, height })
+    } else {
+      // 부모 창이 없으면 화면 중앙에 배치
+      const display = screen.getPrimaryDisplay()
+      const { workArea } = display
+      const dialogX = workArea.x + Math.floor((workArea.width - width) / 2)
+      const dialogY = workArea.y + Math.floor((workArea.height - height) / 2)
+      
+      dialogWindow.setBounds({ x: dialogX, y: dialogY, width, height })
+    }
+    
+    // 창 표시
+    dialogWindow.show()
+    dialogWindow.focus()
+    
+    console.log(`[Dialog] Resized and shown: ${dialogId}, size: ${width}x${height}`)
+  }
 })
