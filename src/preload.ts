@@ -24,6 +24,7 @@ export type ContextBridgeApi = {
     windowClose: () => void,
     openChatRoom: (roomId: string, userName?: string) => void,
     showMainWindow: () => void,
+    openExternal: (url: string) => void,
     // 커스텀 다이얼로그 API
     showDialog: (message: string) => Promise<void>,
     showConfirm: (message: string) => Promise<boolean>,
@@ -75,6 +76,10 @@ const exposedApi: ContextBridgeApi = {
     showMainWindow: () => {
         console.log('showMainWindow called');
         ipcRenderer.send('show-main-window');
+    },
+    openExternal: (url: string) => {
+        console.log('openExternal called with url:', url);
+        ipcRenderer.send('open-external', url);
     },
     // 커스텀 다이얼로그 API
     showDialog: (message: string): Promise<void> => {

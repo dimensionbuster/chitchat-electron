@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -225,13 +225,28 @@ function updateTrayMenu(): void {
       label: '채팅방',
       submenu: Array.from(chatRoomWindows.entries()).map(([roomId, window]) => ({
         label: `📱 ${roomId}`,
-        click: () => {
-          if (!window.isDestroyed()) {
-            if (window.isMinimized()) window.restore()
-            window.show()
-            window.focus()
+        submenu: [
+          {
+            label: '창 열기',
+            click: () => {
+              if (!window.isDestroyed()) {
+                if (window.isMinimized()) window.restore()
+                window.show()
+                window.focus()
+              }
+            }
+          },
+          {
+            label: '창 닫기',
+            click: () => {
+              if (!window.isDestroyed()) {
+                window.destroy()
+              }
+              chatRoomWindows.delete(roomId)
+              updateTrayMenu()
+            }
           }
-        }
+        ]
       }))
     })
     menuItems.push({
@@ -720,6 +735,14 @@ ipcMain.on('open-chat-room', (_event, roomId: string, userName?: string) => {
 // 메인 윈도우 표시
 ipcMain.on('show-main-window', () => {
   showMainWindow()
+})
+
+// 외부 브라우저에서 링크 열기
+ipcMain.on('open-external', (_event, url: string) => {
+  // 보안: http, https, ftp 프로토콜만 허용
+  if (url.match(/^(https?|ftp):\/\//)) {
+    shell.openExternal(url)
+  }
 })
 
 // 커스텀 다이얼로그 핸들러
