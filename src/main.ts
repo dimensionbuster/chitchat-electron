@@ -557,7 +557,6 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
       { hash: chatUrl }
     )
   }
-  chatWindow.webContents.openDevTools()
   // 개발 모드에서만 개발 도구 열기
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     chatWindow.webContents.openDevTools()
