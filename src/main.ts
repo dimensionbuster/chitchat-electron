@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, shell, dialog } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -731,6 +731,63 @@ ipcMain.on('open-chat-room', (_event, roomId: string, userName?: string) => {
   createChatRoomWindow(roomId, userName)
 })
 
+// 설정 창 열기
+let settingsWindow: BrowserWindow | null = null
+
+function createSettingsWindow(parentWindow?: BrowserWindow): void {
+  // 이미 열려있으면 포커스
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore()
+    settingsWindow.show()
+    settingsWindow.focus()
+    return
+  }
+
+  const preloadPath = path.join(__dirname, 'preload.js')
+  
+  settingsWindow = new BrowserWindow({
+    width: 720,
+    height: 700,
+    parent: parentWindow || undefined,
+    frame: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: 'persist:chitchat',
+      webSecurity: true,
+    },
+  })
+
+  const settingsUrl = '/settings'
+  
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    settingsWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${settingsUrl}`)
+  } else {
+    settingsWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+      { hash: settingsUrl }
+    )
+  }
+
+  // 개발 모드에서 DevTools 열기
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    settingsWindow.webContents.openDevTools()
+  }
+
+  settingsWindow.on('closed', () => {
+    settingsWindow = null
+  })
+}
+
+ipcMain.on('open-settings', (event) => {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender) || undefined
+  createSettingsWindow(parentWindow)
+})
+
 // 메인 윈도우 표시
 ipcMain.on('show-main-window', () => {
   showMainWindow()
@@ -806,5 +863,98 @@ ipcMain.on('resize-and-show-dialog', (_event, dialogId: string, width: number, h
     dialogWindow.focus()
     
     console.log(`[Dialog] Resized and shown: ${dialogId}, size: ${width}x${height}`)
+  }
+})
+
+// ============================================================================
+// 배경 이미지 관리
+// ============================================================================
+
+const BACKGROUNDS_DIR = path.join(app.getPath('userData'), 'backgrounds')
+
+// 배경 디렉토리 초기화
+function ensureBackgroundsDir(): void {
+  if (!fs.existsSync(BACKGROUNDS_DIR)) {
+    fs.mkdirSync(BACKGROUNDS_DIR, { recursive: true })
+    console.log('Created backgrounds directory:', BACKGROUNDS_DIR)
+  }
+}
+
+// 배경 이미지 파일 경로 가져오기
+function getBackgroundPath(type: 'home' | 'chat' | 'notification'): string {
+  return path.join(BACKGROUNDS_DIR, `${type}-background.png`)
+}
+
+// 배경 이미지 설정
+ipcMain.handle('set-background-image', async (_event, type: 'home' | 'chat' | 'notification', imageData: ArrayBuffer): Promise<boolean> => {
+  try {
+    ensureBackgroundsDir()
+    const filePath = getBackgroundPath(type)
+    const buffer = Buffer.from(imageData)
+    fs.writeFileSync(filePath, buffer)
+    console.log(`[Background] Saved ${type} background:`, filePath)
+    return true
+  } catch (error) {
+    console.error(`[Background] Failed to save ${type} background:`, error)
+    return false
+  }
+})
+
+// 배경 이미지 가져오기 (base64 data URL로 반환)
+ipcMain.handle('get-background-image', async (_event, type: 'home' | 'chat' | 'notification'): Promise<string | null> => {
+  try {
+    const filePath = getBackgroundPath(type)
+    if (!fs.existsSync(filePath)) {
+      return null
+    }
+    const buffer = fs.readFileSync(filePath)
+    const base64 = buffer.toString('base64')
+    // MIME 타입 추정 (PNG로 저장하므로 PNG 사용)
+    return `data:image/png;base64,${base64}`
+  } catch (error) {
+    console.error(`[Background] Failed to load ${type} background:`, error)
+    return null
+  }
+})
+
+// 배경 이미지 삭제
+ipcMain.handle('remove-background-image', async (_event, type: 'home' | 'chat' | 'notification'): Promise<boolean> => {
+  try {
+    const filePath = getBackgroundPath(type)
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath)
+      console.log(`[Background] Removed ${type} background`)
+    }
+    return true
+  } catch (error) {
+    console.error(`[Background] Failed to remove ${type} background:`, error)
+    return false
+  }
+})
+
+// 배경 이미지 선택 다이얼로그
+ipcMain.handle('select-background-image', async (): Promise<ArrayBuffer | null> => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: '배경 이미지 선택',
+      filters: [
+        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] }
+      ],
+      properties: ['openFile']
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    const filePath = result.filePaths[0]
+    if (!filePath) {
+      return null
+    }
+    const buffer = fs.readFileSync(filePath)
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+  } catch (error) {
+    console.error('[Background] Failed to select image:', error)
+    return null
   }
 })

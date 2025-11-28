@@ -30,6 +30,13 @@ export type ContextBridgeApi = {
     showConfirm: (message: string) => Promise<boolean>,
     closeDialog: (dialogId: string, result: boolean) => void,
     resizeAndShowDialog: (dialogId: string, width: number, height: number) => void,
+    // 배경 이미지 API
+    setBackgroundImage: (type: 'home' | 'chat' | 'notification', imageData: ArrayBuffer) => Promise<boolean>,
+    getBackgroundImage: (type: 'home' | 'chat' | 'notification') => Promise<string | null>,
+    removeBackgroundImage: (type: 'home' | 'chat' | 'notification') => Promise<boolean>,
+    selectBackgroundImage: () => Promise<ArrayBuffer | null>,
+    // 설정 창 API
+    openSettings: () => void,
 }
 
 const exposedApi: ContextBridgeApi = {
@@ -97,6 +104,28 @@ const exposedApi: ContextBridgeApi = {
     resizeAndShowDialog: (dialogId: string, width: number, height: number) => {
         console.log('resizeAndShowDialog called:', dialogId, width, height);
         ipcRenderer.send('resize-and-show-dialog', dialogId, width, height);
+    },
+    // 배경 이미지 API
+    setBackgroundImage: (type: 'home' | 'chat' | 'notification', imageData: ArrayBuffer): Promise<boolean> => {
+        console.log('setBackgroundImage called:', type);
+        return ipcRenderer.invoke('set-background-image', type, imageData);
+    },
+    getBackgroundImage: (type: 'home' | 'chat' | 'notification'): Promise<string | null> => {
+        console.log('getBackgroundImage called:', type);
+        return ipcRenderer.invoke('get-background-image', type);
+    },
+    removeBackgroundImage: (type: 'home' | 'chat' | 'notification'): Promise<boolean> => {
+        console.log('removeBackgroundImage called:', type);
+        return ipcRenderer.invoke('remove-background-image', type);
+    },
+    selectBackgroundImage: (): Promise<ArrayBuffer | null> => {
+        console.log('selectBackgroundImage called');
+        return ipcRenderer.invoke('select-background-image');
+    },
+    // 설정 창 API
+    openSettings: () => {
+        console.log('openSettings called');
+        ipcRenderer.send('open-settings');
     }
 }
 

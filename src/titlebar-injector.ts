@@ -13,8 +13,8 @@ export function injectCustomTitlebar() {
             top: 0;
             left: 0;
             right: 0;
-            height: 32px;
-            background: #2f3241;
+            height: 36px;
+            background: linear-gradient(135deg, #9b87f5 0%, #d6bcfa 50%, #f5a9d6 100%);
             color: #fff;
             display: flex;
             align-items: center;
@@ -22,7 +22,7 @@ export function injectCustomTitlebar() {
             padding: 0;
             z-index: 999999;
             user-select: none;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 2px 8px rgba(155, 135, 245, 0.3);
         }
         
         #electron-custom-titlebar .titlebar-drag-area {
@@ -30,13 +30,15 @@ export function injectCustomTitlebar() {
             display: flex;
             align-items: center;
             height: 100%;
-            padding-left: 12px;
+            padding-left: 16px;
             -webkit-app-region: drag;
         }
         
         #electron-custom-titlebar .titlebar-title {
-            font-size: 13px;
-            font-weight: 500;
+            font-size: 14px;
+            font-weight: 600;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            letter-spacing: 0.5px;
         }
         
         #electron-custom-titlebar .titlebar-controls {
@@ -46,8 +48,8 @@ export function injectCustomTitlebar() {
         }
         
         #electron-custom-titlebar .titlebar-button {
-            width: 46px;
-            height: 32px;
+            width: 48px;
+            height: 36px;
             border: none;
             background: transparent;
             color: #fff;
@@ -55,20 +57,24 @@ export function injectCustomTitlebar() {
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: background-color 0.15s ease;
+            transition: all 0.2s ease;
             padding: 0;
         }
         
         #electron-custom-titlebar .titlebar-button:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        #electron-custom-titlebar .titlebar-button:active {
+            background: rgba(255, 255, 255, 0.3);
         }
         
         #electron-custom-titlebar .titlebar-button.close:hover {
-            background: #e81123;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
         }
         
         body {
-            padding-top: 32px !important;
+            padding-top: 36px !important;
         }
         
         #app {
