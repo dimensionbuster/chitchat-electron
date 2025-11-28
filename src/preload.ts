@@ -37,6 +37,8 @@ export type ContextBridgeApi = {
     selectBackgroundImage: () => Promise<ArrayBuffer | null>,
     // 설정 창 API
     openSettings: () => void,
+    // 🔥 시스템 이벤트 리스너
+    onSystemResume: (callback: () => void) => void,
 }
 
 const exposedApi: ContextBridgeApi = {
@@ -126,6 +128,14 @@ const exposedApi: ContextBridgeApi = {
     openSettings: () => {
         console.log('openSettings called');
         ipcRenderer.send('open-settings');
+    },
+    // 🔥 시스템 이벤트 리스너
+    onSystemResume: (callback: () => void) => {
+        console.log('onSystemResume listener registered');
+        ipcRenderer.on('system-resume', () => {
+            console.log('system-resume event received in renderer');
+            callback();
+        });
     }
 }
 
@@ -140,6 +150,15 @@ contextBridge.exposeInMainWorld('__electronWindowMaximize', exposedApi.windowMax
 contextBridge.exposeInMainWorld('__electronWindowClose', exposedApi.windowClose);
 
 console.log('Preload: Individual functions exposed as backup');
+
+// F12 키로 개발자 도구 토글
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'F12') {
+        e.preventDefault();
+        console.log('F12 pressed - toggling DevTools');
+        ipcRenderer.send('toggle-devtools');
+    }
+});
 
 // Inject titlebar when DOM is ready
 window.addEventListener('DOMContentLoaded', () => {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -616,10 +616,67 @@ app.commandLine.appendSwitch('disable-background-timer-throttling')
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
 app.commandLine.appendSwitch('disable-features', 'WebContentsDiscard')
 
+// ============================================================================
+// 전원 관리 및 시스템 이벤트 (절전 모드 대응)
+// ============================================================================
+
+/**
+ * 모든 윈도우에 절전모드 복귀 이벤트 전송
+ */
+function notifyWindowsOfResume(): void {
+  console.log('[PowerManagement] 모든 윈도우에 복귀 알림 전송')
+  
+  // 메인 윈도우
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('system-resume')
+  }
+  
+  // 채팅방 윈도우들
+  chatRoomWindows.forEach((window) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('system-resume')
+    }
+  })
+}
+
 app.on('ready', async () => {
   // Power Save Blocker 활성화 - 시스템 절전 모드 방지
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
   console.log('Power Save Blocker activated:', powerSaveBlocker.isStarted(powerSaveBlockerId))
+  
+  // 🔥 전원 관리 이벤트 리스너 (절전 모드 대응)
+  powerMonitor.on('suspend', () => {
+    console.log('[PowerManagement] 시스템 절전 모드 진입')
+  })
+  
+  powerMonitor.on('resume', () => {
+    console.log('[PowerManagement] 시스템 절전 모드 복귀')
+    // 짧은 지연 후 윈도우에 알림 (시스템 안정화 대기)
+    setTimeout(() => {
+      notifyWindowsOfResume()
+    }, 500)
+  })
+  
+  powerMonitor.on('lock-screen', () => {
+    console.log('[PowerManagement] 화면 잠금')
+  })
+  
+  powerMonitor.on('unlock-screen', () => {
+    console.log('[PowerManagement] 화면 잠금 해제')
+    // 잠금 해제 시에도 연결 상태 확인
+    setTimeout(() => {
+      notifyWindowsOfResume()
+    }, 500)
+  })
+  
+  // 🔥 AC/배터리 전환 감지 (노트북)
+  powerMonitor.on('on-ac', () => {
+    console.log('[PowerManagement] AC 전원 연결')
+  })
+  
+  powerMonitor.on('on-battery', () => {
+    console.log('[PowerManagement] 배터리 모드 전환')
+  })
   
   // IndexedDB 및 LocalStorage를 위한 세션 설정
   // partition 설정으로 영구 저장소 활성화
@@ -716,6 +773,18 @@ ipcMain.on('click-notification', (_event, roomId: string, userName?: string) => 
 ipcMain.on('window-minimize', handleWindowMinimize)
 ipcMain.on('window-maximize', handleWindowMaximize)
 ipcMain.on('window-close', handleWindowClose)
+
+// 개발자 도구 토글 (F12)
+ipcMain.on('toggle-devtools', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (window) {
+    if (window.webContents.isDevToolsOpened()) {
+      window.webContents.closeDevTools()
+    } else {
+      window.webContents.openDevTools()
+    }
+  }
+})
 
 // 로깅
 ipcMain.on('log-message', (_event, { level, message }: { level: 'info' | 'warn' | 'error'; message: string }) => {
