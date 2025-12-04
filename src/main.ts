@@ -219,34 +219,19 @@ function updateTrayMenu(): void {
     }
   ]
 
-  // 활성 채팅방 목록 추가
+  // 활성 채팅방 목록 추가 - 클릭 시 바로 열기
   if (chatRoomWindows.size > 0) {
     menuItems.push({
       label: '채팅방',
       submenu: Array.from(chatRoomWindows.entries()).map(([roomId, window]) => ({
         label: `📱 ${roomId}`,
-        submenu: [
-          {
-            label: '창 열기',
-            click: () => {
-              if (!window.isDestroyed()) {
-                if (window.isMinimized()) window.restore()
-                window.show()
-                window.focus()
-              }
-            }
-          },
-          {
-            label: '창 닫기',
-            click: () => {
-              if (!window.isDestroyed()) {
-                window.destroy()
-              }
-              chatRoomWindows.delete(roomId)
-              updateTrayMenu()
-            }
+        click: () => {
+          if (!window.isDestroyed()) {
+            if (window.isMinimized()) window.restore()
+            window.show()
+            window.focus()
           }
-        ]
+        }
       }))
     })
     menuItems.push({
@@ -508,6 +493,16 @@ function handleWindowClose(event: Electron.IpcMainEvent): void {
   window?.close()
 }
 
+/**
+ * 창 완전히 닫기 (확실하게 종료)
+ */
+function handleWindowDestroy(event: Electron.IpcMainEvent): void {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (window && !window.isDestroyed()) {
+    window.destroy()
+  }
+}
+
 // ============================================================================
 // 채팅방 윈도우 관리
 // ============================================================================
@@ -594,11 +589,18 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
   
   // 트레이 메뉴 업데이트
   updateTrayMenu()
+  
+  // 마지막 열린 채팅방 목록 저장
+  saveLastOpenedRooms()
 
   // 창이 완전히 닫힐 때 맵에서 제거 및 트레이 메뉴 업데이트
   chatWindow.on('closed', () => {
     chatRoomWindows.delete(roomId)
     updateTrayMenu()
+    
+    // 마지막 열린 채팅방 목록 업데이트
+    saveLastOpenedRooms()
+    
     console.log(`Chat room window closed: ${roomId}`)
   })
 }
@@ -720,6 +722,11 @@ app.on('ready', async () => {
   
   createWindow()
   createTray()
+  
+  // 약간의 지연 후 마지막 열린 채팅방 복원
+  setTimeout(() => {
+    restoreLastOpenedRooms()
+  }, 1000) // 1초 지연 (메인 윈도우가 완전히 로드된 후)
 })
 
 app.on('before-quit', () => {
@@ -773,6 +780,7 @@ ipcMain.on('click-notification', (_event, roomId: string, userName?: string) => 
 ipcMain.on('window-minimize', handleWindowMinimize)
 ipcMain.on('window-maximize', handleWindowMaximize)
 ipcMain.on('window-close', handleWindowClose)
+ipcMain.on('window-destroy', handleWindowDestroy)
 
 // 개발자 도구 토글 (F12)
 ipcMain.on('toggle-devtools', (event) => {
@@ -1034,6 +1042,57 @@ ipcMain.handle('select-background-image', async (): Promise<ArrayBuffer | null> 
 
 const NOTIFICATION_SOUNDS_DIR = path.join(app.getPath('userData'), 'notification-sounds')
 const NOTIFICATION_SETTINGS_FILE = path.join(app.getPath('userData'), 'notification-settings.json')
+const LAST_OPENED_ROOMS_FILE = path.join(app.getPath('userData'), 'last-opened-rooms.json')
+
+// ============================================================================
+// 마지막 열린 채팅방 관리
+// ============================================================================
+
+/**
+ * 마지막 열린 채팅방 목록 저장
+ */
+function saveLastOpenedRooms(): void {
+  try {
+    const openedRooms = Array.from(chatRoomWindows.keys())
+    fs.writeFileSync(LAST_OPENED_ROOMS_FILE, JSON.stringify(openedRooms, null, 2), 'utf-8')
+    console.log('[LastOpenedRooms] Saved:', openedRooms)
+  } catch (error) {
+    console.error('[LastOpenedRooms] Failed to save:', error)
+  }
+}
+
+/**
+ * 마지막 열린 채팅방 목록 불러오기
+ */
+function loadLastOpenedRooms(): string[] {
+  try {
+    if (fs.existsSync(LAST_OPENED_ROOMS_FILE)) {
+      const data = fs.readFileSync(LAST_OPENED_ROOMS_FILE, 'utf-8')
+      const rooms = JSON.parse(data) as string[]
+      console.log('[LastOpenedRooms] Loaded:', rooms)
+      return Array.isArray(rooms) ? rooms : []
+    }
+  } catch (error) {
+    console.error('[LastOpenedRooms] Failed to load:', error)
+  }
+  return []
+}
+
+/**
+ * 앱 시작 시 마지막 열린 채팅방 자동으로 열기
+ */
+function restoreLastOpenedRooms(): void {
+  const lastRooms = loadLastOpenedRooms()
+  if (lastRooms.length > 0) {
+    console.log('[LastOpenedRooms] Restoring rooms:', lastRooms)
+    // 약간의 지연을 두고 창들을 순차적으로 열기
+    lastRooms.forEach((roomId, index) => {
+      setTimeout(() => {
+        createChatRoomWindow(roomId)
+      }, index * 200) // 200ms 간격
+    })
+  }
+}
 
 // 알림 소리 디렉토리 초기화
 function ensureNotificationSoundsDir(): void {

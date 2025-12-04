@@ -22,6 +22,7 @@ export type ContextBridgeApi = {
     windowMinimize: () => void,
     windowMaximize: () => void,
     windowClose: () => void,
+    windowDestroy: () => void,
     openChatRoom: (roomId: string, userName?: string) => void,
     showMainWindow: () => void,
     openExternal: (url: string) => void,
@@ -82,6 +83,10 @@ const exposedApi: ContextBridgeApi = {
     windowClose: () => {
         console.log('windowClose called');
         ipcRenderer.send('window-close');
+    },
+    windowDestroy: () => {
+        console.log('windowDestroy called');
+        ipcRenderer.send('window-destroy');
     },
     clickNotification: (roomId: string, userName?: string) => {
         console.log('clickNotification called with roomId:', roomId, 'userName:', userName);
