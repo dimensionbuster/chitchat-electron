@@ -37,6 +37,15 @@ export type ContextBridgeApi = {
     selectBackgroundImage: () => Promise<ArrayBuffer | null>,
     // 설정 창 API
     openSettings: () => void,
+    // 알림 소리 API
+    setNotificationSound: (audioData: ArrayBuffer) => Promise<boolean>,
+    getNotificationSound: () => Promise<string | null>,
+    removeNotificationSound: () => Promise<boolean>,
+    selectNotificationSound: () => Promise<ArrayBuffer | null>,
+    setNotificationVolume: (volume: number) => Promise<void>,
+    getNotificationVolume: () => Promise<number>,
+    setNotificationEnabled: (enabled: boolean) => Promise<void>,
+    getNotificationEnabled: () => Promise<boolean>,
     // 🔥 시스템 이벤트 리스너
     onSystemResume: (callback: () => void) => void,
 }
@@ -128,6 +137,39 @@ const exposedApi: ContextBridgeApi = {
     openSettings: () => {
         console.log('openSettings called');
         ipcRenderer.send('open-settings');
+    },
+    // 알림 소리 API
+    setNotificationSound: (audioData: ArrayBuffer): Promise<boolean> => {
+        console.log('setNotificationSound called');
+        return ipcRenderer.invoke('set-notification-sound', audioData);
+    },
+    getNotificationSound: (): Promise<string | null> => {
+        console.log('getNotificationSound called');
+        return ipcRenderer.invoke('get-notification-sound');
+    },
+    removeNotificationSound: (): Promise<boolean> => {
+        console.log('removeNotificationSound called');
+        return ipcRenderer.invoke('remove-notification-sound');
+    },
+    selectNotificationSound: (): Promise<ArrayBuffer | null> => {
+        console.log('selectNotificationSound called');
+        return ipcRenderer.invoke('select-notification-sound');
+    },
+    setNotificationVolume: (volume: number): Promise<void> => {
+        console.log('setNotificationVolume called:', volume);
+        return ipcRenderer.invoke('set-notification-volume', volume);
+    },
+    getNotificationVolume: (): Promise<number> => {
+        console.log('getNotificationVolume called');
+        return ipcRenderer.invoke('get-notification-volume');
+    },
+    setNotificationEnabled: (enabled: boolean): Promise<void> => {
+        console.log('setNotificationEnabled called:', enabled);
+        return ipcRenderer.invoke('set-notification-enabled', enabled);
+    },
+    getNotificationEnabled: (): Promise<boolean> => {
+        console.log('getNotificationEnabled called');
+        return ipcRenderer.invoke('get-notification-enabled');
     },
     // 🔥 시스템 이벤트 리스너
     onSystemResume: (callback: () => void) => {

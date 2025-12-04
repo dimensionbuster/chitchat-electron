@@ -1027,3 +1027,144 @@ ipcMain.handle('select-background-image', async (): Promise<ArrayBuffer | null> 
     return null
   }
 })
+
+// ============================================================================
+// 알림 소리 관리
+// ============================================================================
+
+const NOTIFICATION_SOUNDS_DIR = path.join(app.getPath('userData'), 'notification-sounds')
+const NOTIFICATION_SETTINGS_FILE = path.join(app.getPath('userData'), 'notification-settings.json')
+
+// 알림 소리 디렉토리 초기화
+function ensureNotificationSoundsDir(): void {
+  if (!fs.existsSync(NOTIFICATION_SOUNDS_DIR)) {
+    fs.mkdirSync(NOTIFICATION_SOUNDS_DIR, { recursive: true })
+    console.log('Created notification sounds directory:', NOTIFICATION_SOUNDS_DIR)
+  }
+}
+
+// 커스텀 알림 소리 파일 경로
+function getNotificationSoundPath(): string {
+  return path.join(NOTIFICATION_SOUNDS_DIR, 'custom-sound.mp3')
+}
+
+// 알림 소리 설정 로드
+function loadNotificationSettings(): { volume: number; enabled: boolean } {
+  try {
+    if (fs.existsSync(NOTIFICATION_SETTINGS_FILE)) {
+      const data = fs.readFileSync(NOTIFICATION_SETTINGS_FILE, 'utf8')
+      return JSON.parse(data)
+    }
+  } catch (error) {
+    console.error('[NotificationSound] Failed to load settings:', error)
+  }
+  return { volume: 0.5, enabled: true }
+}
+
+// 알림 소리 설정 저장
+function saveNotificationSettings(settings: { volume?: number; enabled?: boolean }): void {
+  try {
+    const current = loadNotificationSettings()
+    const updated = { ...current, ...settings }
+    fs.writeFileSync(NOTIFICATION_SETTINGS_FILE, JSON.stringify(updated, null, 2))
+    console.log('[NotificationSound] Settings saved:', updated)
+  } catch (error) {
+    console.error('[NotificationSound] Failed to save settings:', error)
+  }
+}
+
+// 커스텀 알림 소리 설정
+ipcMain.handle('set-notification-sound', async (_event, audioData: ArrayBuffer): Promise<boolean> => {
+  try {
+    ensureNotificationSoundsDir()
+    const filePath = getNotificationSoundPath()
+    const buffer = Buffer.from(audioData)
+    fs.writeFileSync(filePath, buffer)
+    console.log('[NotificationSound] Saved custom sound:', filePath)
+    return true
+  } catch (error) {
+    console.error('[NotificationSound] Failed to save custom sound:', error)
+    return false
+  }
+})
+
+// 커스텀 알림 소리 가져오기 (base64 data URL로 반환)
+ipcMain.handle('get-notification-sound', async (): Promise<string | null> => {
+  try {
+    const filePath = getNotificationSoundPath()
+    if (!fs.existsSync(filePath)) {
+      return null
+    }
+    const buffer = fs.readFileSync(filePath)
+    const base64 = buffer.toString('base64')
+    // MIME 타입을 audio/mpeg로 설정 (MP3)
+    return `data:audio/mpeg;base64,${base64}`
+  } catch (error) {
+    console.error('[NotificationSound] Failed to load custom sound:', error)
+    return null
+  }
+})
+
+// 커스텀 알림 소리 삭제
+ipcMain.handle('remove-notification-sound', async (): Promise<boolean> => {
+  try {
+    const filePath = getNotificationSoundPath()
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath)
+      console.log('[NotificationSound] Removed custom sound')
+    }
+    return true
+  } catch (error) {
+    console.error('[NotificationSound] Failed to remove custom sound:', error)
+    return false
+  }
+})
+
+// 알림 소리 파일 선택 다이얼로그
+ipcMain.handle('select-notification-sound', async (): Promise<ArrayBuffer | null> => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: '알림 소리 선택',
+      filters: [
+        { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac'] }
+      ],
+      properties: ['openFile']
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    const filePath = result.filePaths[0]
+    if (!filePath) {
+      return null
+    }
+    const buffer = fs.readFileSync(filePath)
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+  } catch (error) {
+    console.error('[NotificationSound] Failed to select sound:', error)
+    return null
+  }
+})
+
+// 음량 설정
+ipcMain.handle('set-notification-volume', async (_event, volume: number): Promise<void> => {
+  saveNotificationSettings({ volume })
+})
+
+// 음량 가져오기
+ipcMain.handle('get-notification-volume', async (): Promise<number> => {
+  const settings = loadNotificationSettings()
+  return settings.volume
+})
+
+// 알림 활성화 설정
+ipcMain.handle('set-notification-enabled', async (_event, enabled: boolean): Promise<void> => {
+  saveNotificationSettings({ enabled })
+})
+
+// 알림 활성화 상태 가져오기
+ipcMain.handle('get-notification-enabled', async (): Promise<boolean> => {
+  const settings = loadNotificationSettings()
+  return settings.enabled
+})
