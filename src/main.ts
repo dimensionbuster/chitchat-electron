@@ -811,16 +811,30 @@ app.on('ready', async () => {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://s.ytimg.com; " +
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://www.youtube-nocookie.com https://s.ytimg.com https://www.google.com https://*.googlevideo.com; " +
           "connect-src 'self' ws: wss: http: https: data: blob:; " +
           "img-src 'self' data: blob: https:; " +
           "media-src 'self' data: blob: https: http:; " +
           "font-src 'self' data: https://fonts.gstatic.com https:; " +
           "frame-src 'self' https://youtube.com https://www.youtube.com https://youtube-nocookie.com https://www.youtube-nocookie.com; " +
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
+        ],
+        // YouTube iframe에 필요한 Permissions-Policy
+        'Permissions-Policy': [
+          'autoplay=*, encrypted-media=*, accelerometer=*, gyroscope=*, picture-in-picture=*, clipboard-write=*'
         ]
       }
     })
+  })
+  
+  // YouTube 관련 권한 허용
+  mainSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ['media', 'mediaKeySystem', 'clipboard-read', 'clipboard-sanitized-write']
+    if (allowedPermissions.includes(permission)) {
+      callback(true)
+    } else {
+      callback(false)
+    }
   })
   
   console.log('Session configured successfully')
