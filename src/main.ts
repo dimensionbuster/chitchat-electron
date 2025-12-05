@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog, net } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog, net, protocol } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import http from 'node:http'
 import started from 'electron-squirrel-startup'
 
 // ============================================================================
@@ -27,6 +28,8 @@ const chatRoomWindows = new Map<string, BrowserWindow>()
 const dialogWindows = new Map<string, { window: BrowserWindow; resolve: (result: boolean) => void }>()
 const watchPartyWindows = new Map<string, BrowserWindow>()
 let powerSaveBlockerId: number | null = null
+let localServer: http.Server | null = null
+let localServerPort = 0
 
 // ============================================================================
 // 초기 설정
@@ -539,7 +542,7 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
       contextIsolation: true,
       nodeIntegration: false,
       partition: 'persist:chitchat',
-      webSecurity: true,
+      webSecurity: false, // file:// 프로토콜에서 YouTube iframe 허용
       backgroundThrottling: false, // 백그라운드에서도 실시간 통신 유지
     },
   })
@@ -552,6 +555,9 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
   
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     chatWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${chatUrl}`)
+  } else if (localServerPort > 0) {
+    // 프로덕션: 로컬 HTTP 서버로 로드
+    chatWindow.loadURL(getLocalServerUrl(chatUrl))
   } else {
     chatWindow.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
@@ -648,8 +654,37 @@ function createWatchPartyWindow(roomId: string): void {
       contextIsolation: true,
       nodeIntegration: false,
       partition: 'persist:chitchat',
-      webSecurity: true,
+      webSecurity: false, // file:// 프로토콜에서 YouTube iframe 허용
+      allowRunningInsecureContent: false,
     },
+  })
+
+  // Watch Party 창의 세션에 Permissions-Policy 설정
+  watchPartyWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://www.youtube-nocookie.com https://s.ytimg.com https://www.google.com https://*.googlevideo.com; " +
+          "connect-src 'self' ws: wss: http: https: data: blob:; " +
+          "img-src 'self' data: blob: https:; " +
+          "media-src 'self' data: blob: https: http:; " +
+          "font-src 'self' data: https://fonts.gstatic.com https:; " +
+          "frame-src 'self' https://youtube.com https://www.youtube.com https://youtube-nocookie.com https://www.youtube-nocookie.com; " +
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
+        ],
+        'Permissions-Policy': [
+          'autoplay=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'encrypted-media=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'accelerometer=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'gyroscope=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'picture-in-picture=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'clipboard-write=(self), ' +
+          'web-share=(self)'
+        ]
+      }
+    })
   })
 
   // Watch Party 페이지 URL 구성
@@ -657,6 +692,9 @@ function createWatchPartyWindow(roomId: string): void {
   
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     watchPartyWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${watchPartyUrl}`)
+  } else if (localServerPort > 0) {
+    // 프로덕션: 로컬 HTTP 서버로 로드
+    watchPartyWindow.loadURL(getLocalServerUrl(watchPartyUrl))
   } else {
     watchPartyWindow.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
@@ -725,7 +763,112 @@ function notifyWindowsOfResume(): void {
   })
 }
 
+// ============================================================================
+// 로컬 HTTP 서버 (프로덕션 빌드용) - YouTube iframe Permissions Policy 해결
+// ============================================================================
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm'
+}
+
+function startLocalServer(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const rendererPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`)
+    
+    localServer = http.createServer((req, res) => {
+      let urlPath = req.url || '/'
+      
+      // hash 라우팅 처리 - 모든 경로를 index.html로
+      if (urlPath.includes('?') || !urlPath.includes('.')) {
+        urlPath = '/index.html'
+      }
+      
+      const filePath = path.join(rendererPath, urlPath)
+      const ext = path.extname(filePath).toLowerCase()
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+      
+      fs.readFile(filePath, (err, data) => {
+        if (err) {
+          // 파일이 없으면 index.html 반환 (SPA 라우팅)
+          fs.readFile(path.join(rendererPath, 'index.html'), (err2, indexData) => {
+            if (err2) {
+              res.writeHead(404)
+              res.end('Not Found')
+              return
+            }
+            // Permissions-Policy 헤더 추가
+            res.writeHead(200, {
+              'Content-Type': 'text/html',
+              'Permissions-Policy': 'autoplay=*, encrypted-media=*, accelerometer=*, gyroscope=*, picture-in-picture=*, clipboard-write=*'
+            })
+            res.end(indexData)
+          })
+          return
+        }
+        
+        // Permissions-Policy 헤더 추가
+        const headers: Record<string, string> = {
+          'Content-Type': contentType
+        }
+        if (ext === '.html') {
+          headers['Permissions-Policy'] = 'autoplay=*, encrypted-media=*, accelerometer=*, gyroscope=*, picture-in-picture=*, clipboard-write=*'
+        }
+        
+        res.writeHead(200, headers)
+        res.end(data)
+      })
+    })
+    
+    // 사용 가능한 포트 찾기 (45678 부터 시도)
+    const tryPort = (port: number) => {
+      localServer!.listen(port, '127.0.0.1', () => {
+        localServerPort = port
+        console.log(`[LocalServer] Started on http://127.0.0.1:${port}`)
+        resolve(port)
+      }).on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          tryPort(port + 1)
+        } else {
+          reject(err)
+        }
+      })
+    }
+    
+    tryPort(45678)
+  })
+}
+
+function getLocalServerUrl(hashPath: string): string {
+  return `http://127.0.0.1:${localServerPort}/#${hashPath}`
+}
+
 app.on('ready', async () => {
+  // 프로덕션 모드에서 로컬 서버 시작 (YouTube iframe Permissions Policy 해결)
+  if (!MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    try {
+      await startLocalServer()
+    } catch (err) {
+      console.error('[LocalServer] Failed to start:', err)
+    }
+  }
+  
   // Power Save Blocker 활성화 - 시스템 절전 모드 방지
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
   console.log('Power Save Blocker activated:', powerSaveBlocker.isStarted(powerSaveBlockerId))
@@ -820,8 +963,15 @@ app.on('ready', async () => {
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
         ],
         // YouTube iframe에 필요한 Permissions-Policy
+        // (self)와 https://www.youtube.com 등 허용
         'Permissions-Policy': [
-          'autoplay=*, encrypted-media=*, accelerometer=*, gyroscope=*, picture-in-picture=*, clipboard-write=*'
+          'autoplay=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'encrypted-media=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'accelerometer=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'gyroscope=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'picture-in-picture=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
+          'clipboard-write=(self), ' +
+          'web-share=(self)'
         ]
       }
     })
@@ -829,12 +979,51 @@ app.on('ready', async () => {
   
   // YouTube 관련 권한 허용
   mainSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowedPermissions = ['media', 'mediaKeySystem', 'clipboard-read', 'clipboard-sanitized-write']
+    const allowedPermissions = ['media', 'mediaKeySystem', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen']
     if (allowedPermissions.includes(permission)) {
       callback(true)
     } else {
       callback(false)
     }
+  })
+  
+  // Permissions Policy 체크 허용 (YouTube iframe 등)
+  mainSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    // YouTube 관련 origin에서 오는 권한 요청 허용
+    const allowedOrigins = [
+      'https://www.youtube.com',
+      'https://youtube.com',
+      'https://www.youtube-nocookie.com',
+      'https://youtube-nocookie.com',
+      'https://s.ytimg.com',
+      'https://i.ytimg.com'
+    ]
+    
+    const allowedPermissions = [
+      'media',
+      'mediaKeySystem', 
+      'clipboard-read',
+      'clipboard-sanitized-write',
+      'fullscreen',
+      'pointerLock'
+    ]
+    
+    // self origin 항상 허용
+    if (requestingOrigin.startsWith('file://') || requestingOrigin.includes('localhost')) {
+      return true
+    }
+    
+    // YouTube origin 허용
+    if (allowedOrigins.some(origin => requestingOrigin.startsWith(origin))) {
+      return true
+    }
+    
+    // 특정 권한 허용
+    if (allowedPermissions.includes(permission)) {
+      return true
+    }
+    
+    return false
   })
   
   console.log('Session configured successfully')
