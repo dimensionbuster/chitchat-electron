@@ -183,7 +183,7 @@ const exposedApi: ContextBridgeApi = {
             console.log('system-resume event received in renderer');
             callback();
         });
-    }
+    },
 }
 
 // Expose API first

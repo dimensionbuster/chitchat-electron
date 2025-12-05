@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog, net } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -701,7 +701,8 @@ app.on('ready', async () => {
           "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
           "connect-src 'self' ws: wss: http: https: data: blob:; " +
           "img-src 'self' data: blob: https:; " +
-          "media-src 'self' data: blob:; " +
+          "media-src 'self' data: blob: https: http:; " +
+          "frame-src 'self'; " +
           "style-src 'self' 'unsafe-inline';"
         ]
       }
