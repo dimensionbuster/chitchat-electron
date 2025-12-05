@@ -38,6 +38,8 @@ export type ContextBridgeApi = {
     selectBackgroundImage: () => Promise<ArrayBuffer | null>,
     // 설정 창 API
     openSettings: () => void,
+    // Watch Party API
+    openWatchParty: (roomId: string) => void,
     // 알림 소리 API
     setNotificationSound: (audioData: ArrayBuffer) => Promise<boolean>,
     getNotificationSound: () => Promise<string | null>,
@@ -143,6 +145,11 @@ const exposedApi: ContextBridgeApi = {
         console.log('openSettings called');
         ipcRenderer.send('open-settings');
     },
+    // Watch Party API
+    openWatchParty: (roomId: string) => {
+        console.log('openWatchParty called with roomId:', roomId);
+        ipcRenderer.send('open-watch-party', roomId);
+    },
     // 알림 소리 API
     setNotificationSound: (audioData: ArrayBuffer): Promise<boolean> => {
         console.log('setNotificationSound called');
@@ -227,13 +234,16 @@ window.addEventListener('DOMContentLoaded', () => {
     
     // Inject titlebar directly - don't rely on external function
     setTimeout(() => {
-        // 알림창이나 다이얼로그 창인지 확인
-        const isNotificationWindow = window.location.hash.includes('/notification');
-        const isDialogWindow = window.location.hash.includes('/dialog');
+        // 자체 타이틀바가 있거나 인젝션이 필요 없는 페이지 확인
+        const currentHash = window.location.hash
+        const isNotificationWindow = currentHash.includes('/notification')
+        const isDialogWindow = currentHash.includes('/dialog')
+        const isWatchPartyWindow = currentHash.includes('/watch-party')
+        const isSettingsWindow = currentHash.includes('/settings')
         
-        if (isNotificationWindow || isDialogWindow) {
-            console.log('Notification or Dialog window detected - skipping titlebar injection');
-            return;
+        if (isNotificationWindow || isDialogWindow || isWatchPartyWindow || isSettingsWindow) {
+            console.log('Special window detected - skipping titlebar injection:', currentHash)
+            return
         }
         
         console.log('Injecting titlebar directly in preload');

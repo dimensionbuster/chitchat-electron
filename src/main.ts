@@ -25,6 +25,7 @@ let tray: Tray | null = null
 const notificationWindows = new Set<BrowserWindow>()
 const chatRoomWindows = new Map<string, BrowserWindow>()
 const dialogWindows = new Map<string, { window: BrowserWindow; resolve: (result: boolean) => void }>()
+const watchPartyWindows = new Map<string, BrowserWindow>()
 let powerSaveBlockerId: number | null = null
 
 // ============================================================================
@@ -138,6 +139,11 @@ function createWindow(): void {
       console.log('localStorage available:', typeof localStorage !== 'undefined');
       console.log('sessionStorage available:', typeof sessionStorage !== 'undefined');
     `).catch(console.error)
+  })
+
+  // iframe 등에서 새 창 열기 차단 (YouTube 임베드 등)
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
   })
 
   // X 버튼 클릭 시 창을 닫는 대신 숨기기 (백그라운드 실행 유지)
@@ -575,6 +581,11 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
     console.log(`Chat room window loaded: ${roomId}`)
   })
 
+  // iframe 등에서 새 창 열기 차단 (YouTube 임베드 등)
+  chatWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+
   // X 버튼 클릭 시 창을 닫는 대신 숨기기 (백그라운드 실행 유지)
   chatWindow.on('close', (event) => {
     if (!isQuitting) {
@@ -602,6 +613,79 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
     saveLastOpenedRooms()
     
     console.log(`Chat room window closed: ${roomId}`)
+  })
+}
+
+// ============================================================================
+// Watch Party 윈도우 관리
+// ============================================================================
+
+/**
+ * Watch Party 전용 YouTube 플레이어 창 생성
+ */
+function createWatchPartyWindow(roomId: string): void {
+  // 이미 해당 roomId의 Watch Party 창이 열려있으면 포커스
+  const existingWindow = watchPartyWindows.get(roomId)
+  if (existingWindow && !existingWindow.isDestroyed()) {
+    if (existingWindow.isMinimized()) existingWindow.restore()
+    existingWindow.show()
+    existingWindow.focus()
+    return
+  }
+
+  const preloadPath = path.join(__dirname, 'preload.js')
+  const iconPath = path.join(__dirname, '../../assets/originaltwi.ico')
+  
+  const watchPartyWindow = new BrowserWindow({
+    width: 854,
+    height: 580,
+    minWidth: 480,
+    minHeight: 360,
+    frame: false,
+    icon: iconPath,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: 'persist:chitchat',
+      webSecurity: true,
+    },
+  })
+
+  // Watch Party 페이지 URL 구성
+  const watchPartyUrl = `/watch-party?roomId=${encodeURIComponent(roomId)}`
+  
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    watchPartyWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${watchPartyUrl}`)
+  } else {
+    watchPartyWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+      { hash: watchPartyUrl }
+    )
+  }
+
+  // 개발 모드에서만 DevTools
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    watchPartyWindow.webContents.openDevTools()
+  }
+
+  // 페이지 로드 완료 로그
+  watchPartyWindow.webContents.on('did-finish-load', () => {
+    console.log(`Watch Party window loaded for room: ${roomId}`)
+  })
+
+  // 새 창 열기 차단
+  watchPartyWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+
+  // 맵에 추가
+  watchPartyWindows.set(roomId, watchPartyWindow)
+
+  // 창이 닫힐 때 맵에서 제거
+  watchPartyWindow.on('closed', () => {
+    watchPartyWindows.delete(roomId)
+    console.log(`Watch Party window closed for room: ${roomId}`)
   })
 }
 
@@ -692,6 +776,34 @@ app.on('ready', async () => {
     storages: ['serviceworkers', 'cachestorage', 'websql']
   }).catch((err: Error) => console.warn('Clear storage warning:', err.message))
   
+  // YouTube 광고 관련 요청 차단
+  mainSession.webRequest.onBeforeRequest(
+    {
+      urls: [
+        // YouTube 광고 API
+        '*://www.youtube.com/youtubei/v1/player/ad_break*',
+        '*://www.youtube.com/api/stats/ads*',
+        '*://www.youtube.com/pagead/*',
+        '*://www.youtube.com/ptracking*',
+        // Google 광고 네트워크
+        '*://googleads.g.doubleclick.net/*',
+        '*://pagead2.googlesyndication.com/*',
+        '*://www.googleadservices.com/*',
+        '*://*.googlesyndication.com/*',
+        '*://ad.doubleclick.net/*',
+        // 광고 추적 스크립트
+        '*://www.google.com/pagead/*',
+        '*://www.gstatic.com/adsense/*',
+        // IMA SDK (광고 플레이어)
+        '*://imasdk.googleapis.com/*'
+      ]
+    },
+    (details, callback) => {
+      console.log('[Ad Blocked]', details.url.substring(0, 80))
+      callback({ cancel: true })
+    }
+  )
+  
   // CSP 설정: WebRTC 및 WebSocket 연결 허용
   mainSession.webRequest.onHeadersReceived((details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {
     callback({
@@ -699,11 +811,13 @@ app.on('ready', async () => {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://s.ytimg.com; " +
           "connect-src 'self' ws: wss: http: https: data: blob:; " +
           "img-src 'self' data: blob: https:; " +
           "media-src 'self' data: blob: https: http:; " +
-          "frame-src 'self'; " +
-          "style-src 'self' 'unsafe-inline';"
+          "font-src 'self' data: https://fonts.gstatic.com https:; " +
+          "frame-src 'self' https://youtube.com https://www.youtube.com https://youtube-nocookie.com https://www.youtube-nocookie.com; " +
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
         ]
       }
     })
@@ -864,6 +978,12 @@ function createSettingsWindow(parentWindow?: BrowserWindow): void {
 ipcMain.on('open-settings', (event) => {
   const parentWindow = BrowserWindow.fromWebContents(event.sender) || undefined
   createSettingsWindow(parentWindow)
+})
+
+// Watch Party 창 열기
+ipcMain.on('open-watch-party', (_event, roomId: string) => {
+  console.log('IPC: open-watch-party', roomId)
+  createWatchPartyWindow(roomId)
 })
 
 // 메인 윈도우 표시
