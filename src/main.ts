@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog, net, protocol } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -477,7 +477,9 @@ function createDialogWindow(
  */
 function handleWindowMinimize(event: Electron.IpcMainEvent): void {
   const window = BrowserWindow.fromWebContents(event.sender)
-  window?.minimize()
+  if (window && !window.isDestroyed()) {
+    window.minimize()
+  }
 }
 
 /**
@@ -499,7 +501,9 @@ function handleWindowMaximize(event: Electron.IpcMainEvent): void {
  */
 function handleWindowClose(event: Electron.IpcMainEvent): void {
   const window = BrowserWindow.fromWebContents(event.sender)
-  window?.close()
+  if (window && !window.isDestroyed()) {
+    window.close()
+  }
 }
 
 /**
@@ -555,10 +559,8 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
   
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     chatWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${chatUrl}`)
-  } else if (localServerPort > 0) {
-    // 프로덕션: 로컬 HTTP 서버로 로드
-    chatWindow.loadURL(getLocalServerUrl(chatUrl))
   } else {
+    // 프로덕션: file:// 프로토콜로 로드 (IndexedDB 공유를 위해 로컬 서버 사용 안 함)
     chatWindow.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
       { hash: chatUrl }
@@ -627,76 +629,66 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
 // ============================================================================
 
 /**
- * Watch Party 전용 YouTube 플레이어 창 생성
+ * Watch Party 전용 창 생성 (BrowserWindow with iframe)
  */
-function createWatchPartyWindow(roomId: string): void {
+function createWatchPartyWindow(roomId: string, youtubeUrl?: string): void {
+  console.log(`[WatchParty] Creating window for room: ${roomId}, youtubeUrl: ${youtubeUrl}`)
+  
   // 이미 해당 roomId의 Watch Party 창이 열려있으면 포커스
-  const existingWindow = watchPartyWindows.get(roomId)
-  if (existingWindow && !existingWindow.isDestroyed()) {
-    if (existingWindow.isMinimized()) existingWindow.restore()
-    existingWindow.show()
-    existingWindow.focus()
+  const existing = watchPartyWindows.get(roomId)
+  if (existing && !existing.isDestroyed()) {
+    existing.show()
+    existing.focus()
+    // 새 URL이 있으면 Vue 컴포넌트에 전달 (IPC로)
+    if (youtubeUrl) {
+      existing.webContents.send('watch-party:load-youtube-url', youtubeUrl)
+    }
     return
   }
 
   const preloadPath = path.join(__dirname, 'preload.js')
   const iconPath = path.join(__dirname, '../../assets/originaltwi.ico')
   
-  const watchPartyWindow = new BrowserWindow({
-    width: 854,
-    height: 580,
-    minWidth: 480,
-    minHeight: 360,
+  // BrowserWindow 생성 (프레임 없는 창)
+  const window = new BrowserWindow({
+    width: 1200,
+    height: 720,
+    minWidth: 854,
+    minHeight: 480,
     frame: false,
     icon: iconPath,
+    backgroundColor: '#1a1a1a',
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       partition: 'persist:chitchat',
-      webSecurity: false, // file:// 프로토콜에서 YouTube iframe 허용
-      allowRunningInsecureContent: false,
+      backgroundThrottling: false,
+      webSecurity: true, // Vue 컴포넌트는 보안 유지
     },
   })
 
-  // Watch Party 창의 세션에 Permissions-Policy 설정
-  watchPartyWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://www.youtube-nocookie.com https://s.ytimg.com https://www.google.com https://*.googlevideo.com; " +
-          "connect-src 'self' ws: wss: http: https: data: blob:; " +
-          "img-src 'self' data: blob: https:; " +
-          "media-src 'self' data: blob: https: http:; " +
-          "font-src 'self' data: https://fonts.gstatic.com https:; " +
-          "frame-src 'self' https://youtube.com https://www.youtube.com https://youtube-nocookie.com https://www.youtube-nocookie.com; " +
-          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
-        ],
-        'Permissions-Policy': [
-          'autoplay=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
-          'encrypted-media=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
-          'accelerometer=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
-          'gyroscope=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
-          'picture-in-picture=(self "https://www.youtube.com" "https://www.youtube-nocookie.com"), ' +
-          'clipboard-write=(self), ' +
-          'web-share=(self)'
-        ]
-      }
-    })
+  // 새 창 열기 차단
+  window.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
   })
 
-  // Watch Party 페이지 URL 구성
-  const watchPartyUrl = `/watch-party?roomId=${encodeURIComponent(roomId)}`
+  // Watch Party 컴포넌트 로드 (localhost에서만 로드)
+  let watchPartyUrl = `/watch-party?roomId=${encodeURIComponent(roomId)}`
+  if (youtubeUrl) {
+    watchPartyUrl += `&youtubeUrl=${encodeURIComponent(youtubeUrl)}`
+  }
   
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    watchPartyWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${watchPartyUrl}`)
+    // 개발 모드: Vite dev 서버
+    window.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${watchPartyUrl}`)
   } else if (localServerPort > 0) {
-    // 프로덕션: 로컬 HTTP 서버로 로드
-    watchPartyWindow.loadURL(getLocalServerUrl(watchPartyUrl))
+    // 프로덕션: localhost 서버 (YouTube iframe을 위해 필수)
+    window.loadURL(getLocalServerUrl(watchPartyUrl))
   } else {
-    watchPartyWindow.loadFile(
+    // fallback: file:// (YouTube iframe이 작동하지 않음)
+    console.warn('[WatchParty] Local server not available - YouTube iframe will not work with file:// protocol')
+    window.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
       { hash: watchPartyUrl }
     )
@@ -704,27 +696,31 @@ function createWatchPartyWindow(roomId: string): void {
 
   // 개발 모드에서만 DevTools
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    watchPartyWindow.webContents.openDevTools()
+    window.webContents.openDevTools()
   }
 
   // 페이지 로드 완료 로그
-  watchPartyWindow.webContents.on('did-finish-load', () => {
-    console.log(`Watch Party window loaded for room: ${roomId}`)
+  window.webContents.on('did-finish-load', () => {
+    console.log(`[WatchParty] Window loaded for room: ${roomId}`)
+  })
+  
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error(`[WatchParty] Failed to load: ${errorCode} - ${errorDescription}`)
   })
 
-  // 새 창 열기 차단
-  watchPartyWindow.webContents.setWindowOpenHandler(() => {
-    return { action: 'deny' }
-  })
+  // Watch Party는 X 버튼 클릭 시 완전히 종료 (다른 창들과 달리)
+  // (닫을 때 숨기지 않고 바로 종료)
 
   // 맵에 추가
-  watchPartyWindows.set(roomId, watchPartyWindow)
+  watchPartyWindows.set(roomId, window)
 
-  // 창이 닫힐 때 맵에서 제거
-  watchPartyWindow.on('closed', () => {
+  // 창이 완전히 닫힌 후 맵에서 제거
+  window.on('closed', () => {
+    console.log(`[WatchParty] Window closed for room: ${roomId}`)
     watchPartyWindows.delete(roomId)
-    console.log(`Watch Party window closed for room: ${roomId}`)
   })
+
+  console.log(`[WatchParty] Window created for room: ${roomId}`)
 }
 
 // ============================================================================
@@ -838,9 +834,9 @@ function startLocalServer(): Promise<number> {
     
     // 사용 가능한 포트 찾기 (45678 부터 시도)
     const tryPort = (port: number) => {
-      localServer!.listen(port, '127.0.0.1', () => {
+      localServer!.listen(port, 'localhost', () => {
         localServerPort = port
-        console.log(`[LocalServer] Started on http://127.0.0.1:${port}`)
+        console.log(`[LocalServer] Started on http://localhost:${port}`)
         resolve(port)
       }).on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EADDRINUSE') {
@@ -856,7 +852,7 @@ function startLocalServer(): Promise<number> {
 }
 
 function getLocalServerUrl(hashPath: string): string {
-  return `http://127.0.0.1:${localServerPort}/#${hashPath}`
+  return `http://localhost:${localServerPort}/#${hashPath}`
 }
 
 app.on('ready', async () => {
@@ -929,9 +925,9 @@ app.on('ready', async () => {
         '*://www.youtube.com/pagead/*',
         '*://www.youtube.com/ptracking*',
         // Google 광고 네트워크
-        '*://googleads.g.doubleclick.net/*',
         '*://pagead2.googlesyndication.com/*',
         '*://www.googleadservices.com/*',
+        '*://googleads.g.doubleclick.net/*',
         '*://*.googlesyndication.com/*',
         '*://ad.doubleclick.net/*',
         // 광고 추적 스크립트
@@ -1007,11 +1003,6 @@ app.on('ready', async () => {
       'fullscreen',
       'pointerLock'
     ]
-    
-    // self origin 항상 허용
-    if (requestingOrigin.startsWith('file://') || requestingOrigin.includes('localhost')) {
-      return true
-    }
     
     // YouTube origin 허용
     if (allowedOrigins.some(origin => requestingOrigin.startsWith(origin))) {
@@ -1184,9 +1175,24 @@ ipcMain.on('open-settings', (event) => {
 })
 
 // Watch Party 창 열기
-ipcMain.on('open-watch-party', (_event, roomId: string) => {
-  console.log('IPC: open-watch-party', roomId)
-  createWatchPartyWindow(roomId)
+ipcMain.on('open-watch-party', (_event, roomId: string, youtubeUrl?: string) => {
+  console.log('IPC: open-watch-party', roomId, youtubeUrl)
+  createWatchPartyWindow(roomId, youtubeUrl)
+})
+
+// Watch Party 명령 처리 (Vue 컴포넌트가 iframe을 직접 관리하므로 간소화)
+ipcMain.on('watch-party-command', (event, command: string, data: string) => {
+  console.log('[WatchParty] IPC: watch-party-command', command, data)
+  
+  // BrowserWindow 찾기
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) {
+    console.warn('[WatchParty] Window not found for sender')
+    return
+  }
+  
+  // 명령을 다시 renderer로 전달 (Vue 컴포넌트가 처리)
+  window.webContents.send('watch-party:execute-command', command, data)
 })
 
 // 메인 윈도우 표시
@@ -1367,6 +1373,10 @@ ipcMain.handle('select-background-image', async (): Promise<ArrayBuffer | null> 
 const NOTIFICATION_SOUNDS_DIR = path.join(app.getPath('userData'), 'notification-sounds')
 const NOTIFICATION_SETTINGS_FILE = path.join(app.getPath('userData'), 'notification-settings.json')
 const LAST_OPENED_ROOMS_FILE = path.join(app.getPath('userData'), 'last-opened-rooms.json')
+const STYLE_SETTINGS_FILE = path.join(app.getPath('userData'), 'style-settings.json')
+
+// 스타일 설정 메모리 캐시 (로컬 서버 창들에서 사용)
+let cachedStyleSettings: unknown = null
 
 // ============================================================================
 // 마지막 열린 채팅방 관리
@@ -1550,4 +1560,58 @@ ipcMain.handle('set-notification-enabled', async (_event, enabled: boolean): Pro
 ipcMain.handle('get-notification-enabled', async (): Promise<boolean> => {
   const settings = loadNotificationSettings()
   return settings.enabled
+})
+
+// ============================================================================
+// 스타일 설정 관리 (로컬 서버 창에서 사용 - WatchParty 등)
+// ============================================================================
+
+// 스타일 설정 로드
+function loadStyleSettings(): unknown {
+  try {
+    if (fs.existsSync(STYLE_SETTINGS_FILE)) {
+      const data = fs.readFileSync(STYLE_SETTINGS_FILE, 'utf8')
+      cachedStyleSettings = JSON.parse(data)
+      console.log('[StyleSettings] Loaded from file')
+      return cachedStyleSettings
+    }
+  } catch (error) {
+    console.error('[StyleSettings] Failed to load settings:', error)
+  }
+  return null
+}
+
+// 스타일 설정 저장
+function saveStyleSettings(settings: unknown): boolean {
+  try {
+    fs.writeFileSync(STYLE_SETTINGS_FILE, JSON.stringify(settings, null, 2))
+    cachedStyleSettings = settings
+    console.log('[StyleSettings] Settings saved')
+    
+    // 모든 WatchParty 창에 설정 변경 알림
+    watchPartyWindows.forEach((window) => {
+      if (!window.isDestroyed()) {
+        window.webContents.send('style-settings-changed', settings)
+      }
+    })
+    
+    return true
+  } catch (error) {
+    console.error('[StyleSettings] Failed to save settings:', error)
+    return false
+  }
+}
+
+// 스타일 설정 저장 IPC
+ipcMain.handle('set-style-settings', async (_event, settings: unknown): Promise<boolean> => {
+  return saveStyleSettings(settings)
+})
+
+// 스타일 설정 로드 IPC
+ipcMain.handle('get-style-settings', async (): Promise<unknown | null> => {
+  // 캐시가 있으면 사용, 없으면 파일에서 로드
+  if (cachedStyleSettings) {
+    return cachedStyleSettings
+  }
+  return loadStyleSettings()
 })

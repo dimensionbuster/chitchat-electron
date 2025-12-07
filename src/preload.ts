@@ -39,7 +39,8 @@ export type ContextBridgeApi = {
     // 설정 창 API
     openSettings: () => void,
     // Watch Party API
-    openWatchParty: (roomId: string) => void,
+    openWatchParty: (roomId: string, youtubeUrl?: string) => void,
+    sendWatchPartyCommand: (command: string, data: string) => void,
     // 알림 소리 API
     setNotificationSound: (audioData: ArrayBuffer) => Promise<boolean>,
     getNotificationSound: () => Promise<string | null>,
@@ -51,6 +52,10 @@ export type ContextBridgeApi = {
     getNotificationEnabled: () => Promise<boolean>,
     // 🔥 시스템 이벤트 리스너
     onSystemResume: (callback: () => void) => void,
+    // 스타일 설정 API (main process 캐시용 - WatchParty 등 로컬 서버 창에서 사용)
+    setStyleSettings: (settings: unknown) => Promise<boolean>,
+    getStyleSettings: () => Promise<unknown | null>,
+    onStyleSettingsChanged: (callback: (settings: unknown) => void) => void,
 }
 
 const exposedApi: ContextBridgeApi = {
@@ -146,9 +151,13 @@ const exposedApi: ContextBridgeApi = {
         ipcRenderer.send('open-settings');
     },
     // Watch Party API
-    openWatchParty: (roomId: string) => {
-        console.log('openWatchParty called with roomId:', roomId);
-        ipcRenderer.send('open-watch-party', roomId);
+    openWatchParty: (roomId: string, youtubeUrl?: string) => {
+        console.log('openWatchParty called with roomId:', roomId, 'youtubeUrl:', youtubeUrl);
+        ipcRenderer.send('open-watch-party', roomId, youtubeUrl);
+    },
+    sendWatchPartyCommand: (command: string, data: string) => {
+        console.log('sendWatchPartyCommand called:', command, data);
+        ipcRenderer.send('watch-party-command', command, data);
     },
     // 알림 소리 API
     setNotificationSound: (audioData: ArrayBuffer): Promise<boolean> => {
@@ -189,6 +198,22 @@ const exposedApi: ContextBridgeApi = {
         ipcRenderer.on('system-resume', () => {
             console.log('system-resume event received in renderer');
             callback();
+        });
+    },
+    // 스타일 설정 API (main process 캐시용 - WatchParty 등 로컬 서버 창에서 사용)
+    setStyleSettings: (settings: unknown): Promise<boolean> => {
+        console.log('setStyleSettings called');
+        return ipcRenderer.invoke('set-style-settings', settings);
+    },
+    getStyleSettings: (): Promise<unknown | null> => {
+        console.log('getStyleSettings called');
+        return ipcRenderer.invoke('get-style-settings');
+    },
+    onStyleSettingsChanged: (callback: (settings: unknown) => void) => {
+        console.log('onStyleSettingsChanged listener registered');
+        ipcRenderer.on('style-settings-changed', (_event, settings) => {
+            console.log('style-settings-changed event received in renderer');
+            callback(settings);
         });
     },
 }
@@ -239,9 +264,9 @@ window.addEventListener('DOMContentLoaded', () => {
         const isNotificationWindow = currentHash.includes('/notification')
         const isDialogWindow = currentHash.includes('/dialog')
         const isWatchPartyWindow = currentHash.includes('/watch-party')
-        const isSettingsWindow = currentHash.includes('/settings')
+        // const isSettingsWindow = currentHash.includes('/settings')
         
-        if (isNotificationWindow || isDialogWindow || isWatchPartyWindow || isSettingsWindow) {
+        if (isNotificationWindow || isDialogWindow || isWatchPartyWindow) {
             console.log('Special window detected - skipping titlebar injection:', currentHash)
             return
         }
