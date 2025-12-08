@@ -1313,11 +1313,14 @@ function getBackgroundPath(type: 'home' | 'chat' | 'notification'): string {
 
 // 자동 업데이트 - 수동 체크
 ipcMain.handle('check-for-updates', async () => {
-  if (!app.isPackaged) {
-    return { available: false, message: '개발 모드에서는 업데이트를 확인할 수 없습니다.' }
-  }
+  // if (!app.isPackaged) {
+  //   return { available: false, message: '개발 모드에서는 업데이트를 확인할 수 없습니다.' }
+  // }
   
   try {
+    const server = 'https://update.electronjs.org'
+    const feedURL = `${server}/dimensionbuster/chitchat-electron/${process.platform}-${process.arch}/${app.getVersion()}`
+    autoUpdater.setFeedURL({ url: feedURL })
     autoUpdater.checkForUpdates()
     return { available: true, message: '업데이트를 확인 중입니다...' }
   } catch (error) {
