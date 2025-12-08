@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog, autoUpdater } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -1311,23 +1311,70 @@ function getBackgroundPath(type: 'home' | 'chat' | 'notification'): string {
   return path.join(BACKGROUNDS_DIR, `${type}-background.png`)
 }
 
-// 자동 업데이트 - 수동 체크
+// 자동 업데이트 - 수동 체크 (GitHub Releases API 사용)
 ipcMain.handle('check-for-updates', async () => {
-  // if (!app.isPackaged) {
-  //   return { available: false, message: '개발 모드에서는 업데이트를 확인할 수 없습니다.' }
-  // }
+  const currentVersion = app.getVersion()
+  console.log('Manual update check requested')
+  console.log('Current version:', currentVersion)
   
   try {
-    const server = 'https://update.electronjs.org'
-    const feedURL = `${server}/dimensionbuster/chitchat-electron/${process.platform}-${process.arch}/${app.getVersion()}`
-    autoUpdater.setFeedURL({ url: feedURL })
-    autoUpdater.checkForUpdates()
-    return { available: true, message: '업데이트를 확인 중입니다...' }
+    // GitHub Releases API 호출
+    const response = await fetch('https://api.github.com/repos/dimensionbuster/chitchat-electron/releases/latest')
+    
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`)
+    }
+    
+    const data = await response.json()
+    const latestVersion = data.tag_name.replace(/^v/, '') // v1.1.2 -> 1.1.2
+    const releaseUrl = data.html_url
+    
+    console.log('Latest version:', latestVersion)
+    console.log('Release URL:', releaseUrl)
+    
+    // 버전 비교
+    if (compareVersions(latestVersion, currentVersion) > 0) {
+      return {
+        available: true,
+        message: `새 버전이 있습니다!\n현재: v${currentVersion}\n최신: v${latestVersion}`,
+        currentVersion,
+        latestVersion,
+        releaseUrl
+      }
+    } else {
+      return {
+        available: false,
+        message: `최신 버전입니다. (v${currentVersion})`,
+        currentVersion,
+        latestVersion,
+        releaseUrl: null
+      }
+    }
   } catch (error) {
     console.error('Update check failed:', error)
-    return { available: false, message: '업데이트 확인 중 오류가 발생했습니다.' }
+    return {
+      available: false,
+      message: '업데이트 확인 중 오류가 발생했습니다.',
+      currentVersion,
+      latestVersion: null,
+      releaseUrl: null
+    }
   }
 })
+
+// 버전 비교 함수 (semver 간단 구현)
+function compareVersions(v1: string, v2: string): number {
+  const parts1 = v1.split('.').map(Number)
+  const parts2 = v2.split('.').map(Number)
+  
+  for (let i = 0; i < 3; i++) {
+    const a = parts1[i] || 0
+    const b = parts2[i] || 0
+    if (a > b) return 1
+    if (a < b) return -1
+  }
+  return 0
+}
 
 ipcMain.handle('get-app-version', async () => {
   return app.getVersion()
