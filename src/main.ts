@@ -5,7 +5,7 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import started from 'electron-squirrel-startup'
 import { updateElectronApp } from 'update-electron-app'
-
+//test comment
 // ============================================================================
 // 환경 변수 및 전역 상수
 // ============================================================================
