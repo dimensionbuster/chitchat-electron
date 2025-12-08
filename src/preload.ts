@@ -39,7 +39,7 @@ export type ContextBridgeApi = {
     // 설정 창 API
     openSettings: () => void,
     // Watch Party API
-    openWatchParty: (roomId: string, youtubeUrl?: string) => void,
+    openWatchParty: (roomId: string, youtubeUrl?: string, userName?: string) => void,
     sendWatchPartyCommand: (command: string, data: string) => void,
     // 알림 소리 API
     setNotificationSound: (audioData: ArrayBuffer) => Promise<boolean>,
@@ -56,6 +56,11 @@ export type ContextBridgeApi = {
     setStyleSettings: (settings: unknown) => Promise<boolean>,
     getStyleSettings: () => Promise<unknown | null>,
     onStyleSettingsChanged: (callback: (settings: unknown) => void) => void,
+    notifyBackgroundChanged: (bgType: string) => void,
+    onBackgroundChanged: (callback: (bgType: string) => void) => void,
+    // 업데이트 API
+    checkForUpdates: () => Promise<{ available: boolean; message: string }>,
+    getAppVersion: () => Promise<string>,
 }
 
 const exposedApi: ContextBridgeApi = {
@@ -151,9 +156,9 @@ const exposedApi: ContextBridgeApi = {
         ipcRenderer.send('open-settings');
     },
     // Watch Party API
-    openWatchParty: (roomId: string, youtubeUrl?: string) => {
-        console.log('openWatchParty called with roomId:', roomId, 'youtubeUrl:', youtubeUrl);
-        ipcRenderer.send('open-watch-party', roomId, youtubeUrl);
+    openWatchParty: (roomId: string, youtubeUrl?: string, userName?: string) => {
+        console.log('openWatchParty called with roomId:', roomId, 'youtubeUrl:', youtubeUrl, 'userName:', userName);
+        ipcRenderer.send('open-watch-party', roomId, youtubeUrl, userName);
     },
     sendWatchPartyCommand: (command: string, data: string) => {
         console.log('sendWatchPartyCommand called:', command, data);
@@ -216,6 +221,20 @@ const exposedApi: ContextBridgeApi = {
             callback(settings);
         });
     },
+    notifyBackgroundChanged: (bgType: string) => {
+        console.log('notifyBackgroundChanged called:', bgType);
+        ipcRenderer.send('notify-background-changed', bgType);
+    },
+    onBackgroundChanged: (callback: (bgType: string) => void) => {
+        console.log('onBackgroundChanged listener registered');
+        ipcRenderer.on('background-changed', (_event, bgType) => {
+            console.log('background-changed event received in renderer:', bgType);
+            callback(bgType);
+        });
+    },
+    // 업데이트 API
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 }
 
 // Expose API first

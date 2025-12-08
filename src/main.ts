@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, Tray, Menu, session, powerSaveBlocker, powerMonitor, shell, dialog, autoUpdater } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import http from 'node:http'
 import started from 'electron-squirrel-startup'
+import { updateElectronApp } from 'update-electron-app'
 
 // ============================================================================
 // 환경 변수 및 전역 상수
@@ -72,6 +73,21 @@ const userDataPath = app.getPath('userData')
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true })
   console.log('Created userData directory:', userDataPath)
+}
+
+// ============================================================================
+// 자동 업데이트 설정
+// ============================================================================
+
+// 패키징된 앱에서만 자동 업데이트 활성화
+if (app.isPackaged) {
+  updateElectronApp({
+    updateInterval: '10 minutes', // 10분마다 업데이트 확인
+    logger: console, // 업데이트 로그 활성화
+  })
+  console.log('Auto-update enabled')
+} else {
+  console.log('Auto-update disabled in development mode')
 }
 
 // ============================================================================
@@ -631,8 +647,8 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
 /**
  * Watch Party 전용 창 생성 (BrowserWindow with iframe)
  */
-function createWatchPartyWindow(roomId: string, youtubeUrl?: string): void {
-  console.log(`[WatchParty] Creating window for room: ${roomId}, youtubeUrl: ${youtubeUrl}`)
+function createWatchPartyWindow(roomId: string, youtubeUrl?: string, userName?: string): void {
+  console.log(`[WatchParty] Creating window for room: ${roomId}, youtubeUrl: ${youtubeUrl}, userName: ${userName}`)
   
   // 이미 해당 roomId의 Watch Party 창이 열려있으면 포커스
   const existing = watchPartyWindows.get(roomId)
@@ -677,6 +693,9 @@ function createWatchPartyWindow(roomId: string, youtubeUrl?: string): void {
   let watchPartyUrl = `/watch-party?roomId=${encodeURIComponent(roomId)}`
   if (youtubeUrl) {
     watchPartyUrl += `&youtubeUrl=${encodeURIComponent(youtubeUrl)}`
+  }
+  if (userName) {
+    watchPartyUrl += `&userName=${encodeURIComponent(userName)}`
   }
   
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -1175,9 +1194,9 @@ ipcMain.on('open-settings', (event) => {
 })
 
 // Watch Party 창 열기
-ipcMain.on('open-watch-party', (_event, roomId: string, youtubeUrl?: string) => {
-  console.log('IPC: open-watch-party', roomId, youtubeUrl)
-  createWatchPartyWindow(roomId, youtubeUrl)
+ipcMain.on('open-watch-party', (_event, roomId: string, youtubeUrl?: string, userName?: string) => {
+  console.log('IPC: open-watch-party', { roomId, youtubeUrl, userName })
+  createWatchPartyWindow(roomId, youtubeUrl, userName)
 })
 
 // Watch Party 명령 처리 (Vue 컴포넌트가 iframe을 직접 관리하므로 간소화)
@@ -1291,6 +1310,25 @@ function ensureBackgroundsDir(): void {
 function getBackgroundPath(type: 'home' | 'chat' | 'notification'): string {
   return path.join(BACKGROUNDS_DIR, `${type}-background.png`)
 }
+
+// 자동 업데이트 - 수동 체크
+ipcMain.handle('check-for-updates', async () => {
+  if (!app.isPackaged) {
+    return { available: false, message: '개발 모드에서는 업데이트를 확인할 수 없습니다.' }
+  }
+  
+  try {
+    autoUpdater.checkForUpdates()
+    return { available: true, message: '업데이트를 확인 중입니다...' }
+  } catch (error) {
+    console.error('Update check failed:', error)
+    return { available: false, message: '업데이트 확인 중 오류가 발생했습니다.' }
+  }
+})
+
+ipcMain.handle('get-app-version', async () => {
+  return app.getVersion()
+})
 
 // 배경 이미지 설정
 ipcMain.handle('set-background-image', async (_event, type: 'home' | 'chat' | 'notification', imageData: ArrayBuffer): Promise<boolean> => {
@@ -1588,8 +1626,9 @@ function saveStyleSettings(settings: unknown): boolean {
     cachedStyleSettings = settings
     console.log('[StyleSettings] Settings saved')
     
-    // 모든 WatchParty 창에 설정 변경 알림
-    watchPartyWindows.forEach((window) => {
+    // 모든 창에 설정 변경 알림
+    const allWindows = BrowserWindow.getAllWindows()
+    allWindows.forEach((window) => {
       if (!window.isDestroyed()) {
         window.webContents.send('style-settings-changed', settings)
       }
@@ -1614,4 +1653,16 @@ ipcMain.handle('get-style-settings', async (): Promise<unknown | null> => {
     return cachedStyleSettings
   }
   return loadStyleSettings()
+})
+
+// 배경 이미지 변경 알림 IPC
+ipcMain.on('notify-background-changed', (_event, bgType: string) => {
+  console.log('[BackgroundChanged] Notifying all windows about background change:', bgType)
+  // 모든 창에 배경 변경 알림
+  const allWindows = BrowserWindow.getAllWindows()
+  allWindows.forEach((window) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('background-changed', bgType)
+    }
+  })
 })
