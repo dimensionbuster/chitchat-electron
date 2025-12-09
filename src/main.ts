@@ -633,8 +633,10 @@ function createChatRoomWindow(roomId: string, userName?: string): void {
     chatRoomWindows.delete(roomId)
     updateTrayMenu()
     
-    // 마지막 열린 채팅방 목록 업데이트
-    saveLastOpenedRooms()
+    // 사용자가 수동으로 창을 닫은 경우만 저장 (앱 종료 시에는 before-quit에서 저장)
+    if (!isQuitting) {
+      saveLastOpenedRooms()
+    }
     
     console.log(`Chat room window closed: ${roomId}`)
   })
@@ -1059,6 +1061,10 @@ app.on('ready', async () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  
+  // 종료 전 마지막으로 열린 채팅방 목록 저장
+  saveLastOpenedRooms()
+  console.log('[App] Saved opened chat rooms before quit')
   
   // Power Save Blocker 해제
   if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
