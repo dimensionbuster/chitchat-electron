@@ -964,14 +964,14 @@ app.on('ready', async () => {
     }
   )
   
-  // CSP 설정: WebRTC 및 WebSocket 연결 허용
+  // CSP 설정: WebRTC 및 WebSocket 연결 허용, Firebase 도메인 허용
   mainSession.webRequest.onHeadersReceived((details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://www.youtube-nocookie.com https://s.ytimg.com https://www.google.com https://*.googlevideo.com; " +
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://www.youtube-nocookie.com https://s.ytimg.com https://www.google.com https://*.googlevideo.com https://*.firebaseio.com https://*.googleapis.com https://*.firebasedatabase.app; " +
           "connect-src 'self' ws: wss: http: https: data: blob:; " +
           "img-src 'self' data: blob: https:; " +
           "media-src 'self' data: blob: https: http:; " +
